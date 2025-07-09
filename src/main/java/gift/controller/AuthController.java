@@ -25,7 +25,7 @@ public class AuthController {
      * @return userResponseDto JSON형식 이메일, 비밀번호, 생성일
      */
     @PostMapping("/signup")
-    public ResponseEntity<UserResponseDto> userSignUp(@Valid @RequestBody UserRequestDto userRequestDto) {
+    public ResponseEntity<UserResponseDto> signUpUser(@Valid @RequestBody UserRequestDto userRequestDto) {
         return new ResponseEntity<>(authService.userSignUp(userRequestDto), HttpStatus.CREATED);
     }
 
@@ -35,7 +35,7 @@ public class AuthController {
      * @return Void OK 상태코드
      */
     @PostMapping("/login")
-    public ResponseEntity<TokenResponseDto> userLogin(@Valid @RequestBody UserRequestDto userRequestDto) {
-        return new ResponseEntity<>(authService.userLogin(userRequestDto), HttpStatus.OK);         // 성공했을 경우에만 OK 반환
+    public ResponseEntity<TokenResponseDto> loginUser(@Valid @RequestBody UserRequestDto userRequestDto) {
+        return new ResponseEntity<>(authService.userLogin(userRequestDto), HttpStatus.OK);       // 성공했을 경우에만 OK 반환
     }
 }

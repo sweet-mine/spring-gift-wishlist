@@ -30,7 +30,7 @@ public class AdminController {
      * @return Thymeleaf template
      */
     @GetMapping("/products")
-    public String productsListView(Model model) {
+    public String showProductsList(Model model) {
         model.addAttribute("products", productService.findAllProduct());
         return "products_list";
     }
@@ -40,7 +40,7 @@ public class AdminController {
      * @return Thymeleaf template
      */
     @GetMapping("/create")
-    public String createProductView() {
+    public String showCreateProduct() {
         return "products_create";
     }
 
@@ -51,7 +51,7 @@ public class AdminController {
      * @return Thymeleaf template
      */
     @GetMapping("/patch/{id}")
-    public String patchProductView(@PathVariable Long id, Model model) {
+    public String showPatchProduct(@PathVariable Long id, Model model) {
         ProductResponseDto responseDto = productService.findProductById(id);
         model.addAttribute("product", responseDto);
         return "products_patch";
@@ -63,7 +63,7 @@ public class AdminController {
      * @return list로 redirect
      */
     @PostMapping("/delete/{id}")
-    public String deleteProductView(@PathVariable Long id) {
+    public String deleteProduct(@PathVariable Long id) {
         productService.deleteProduct(id);
         return "redirect:/admin/products"; // 목록으로 리다이렉트
     }
@@ -102,7 +102,7 @@ public class AdminController {
      * @return Thymeleaf template
      */
     @GetMapping("/users")
-    public String usersListView(Model model) {
+    public String showUsersList(Model model) {
         model.addAttribute("users", authService.findAllUsers());
         return "users_list";
     }
@@ -112,7 +112,7 @@ public class AdminController {
      * @return Thymeleaf template
      */
     @GetMapping("/users/create")
-    public String createUserView() {
+    public String showCreateUser() {
         return "users_create";
     }
 
@@ -123,7 +123,7 @@ public class AdminController {
      * @return Thymeleaf template
      */
     @GetMapping("/users/patch/{id}")
-    public String patchUserView(@PathVariable Long id, Model model) {
+    public String showPatchUser(@PathVariable Long id, Model model) {
         UserResponseDto responseDto = authService.findUserById(id);
         model.addAttribute("user", responseDto);
         return "users_patch";
@@ -135,7 +135,7 @@ public class AdminController {
      * @return list로 redirect
      */
     @PostMapping("/users/delete/{id}")
-    public String deleteUserView(@PathVariable Long id) {
+    public String deleteUser(@PathVariable Long id) {
         authService.deleteUser(id);
         return "redirect:/admin/users"; // 목록으로 리다이렉트
     }

@@ -2,16 +2,19 @@ package gift.service;
 
 import gift.dto.*;
 import gift.entity.User;
-import gift.exception.ProductNotFoundException;
-import gift.exception.UserNotFoundException;
+import gift.exception.*;
 import gift.repository.UserRepository;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.*;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -19,31 +22,107 @@ import java.util.stream.Collectors;
 public class AuthService {
     private final UserRepository userRepository;
     private final String jwtKey;
+    private final String aesKey;
 
-    public AuthService(UserRepository userRepository, @Value("${jwt_key}") String jwtKey) {
+    public AuthService(UserRepository userRepository, @Value("${jwt_key}") String jwtKey, @Value("${aes_key}") String aesKey) {
         this.userRepository = userRepository;
         this.jwtKey = jwtKey;
+        this.aesKey = aesKey;
     }
+
+    /**
+     * SHA-256 방식으로 해싱
+     * 결과를 HEX String으로 반환
+     */
+    public String encryptSHA256(String text) throws NoSuchAlgorithmException {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        StringBuilder builder = new StringBuilder();
+        md.update(text.getBytes());
+        for (byte b : md.digest()) {
+            builder.append(String.format("%02x", b));
+        }
+
+        return builder.toString();
+    }
+
+    /**
+     * AES/ECB/PKCS5Padding 방식으로 평문을 암호화하고
+     * 결과를 Base64 형태로 반환
+     */
+    public String encryptAES(String plainText) throws Exception {
+        // 1) 키 준비 (hex 문자열 → 16/24/32byte)
+        byte[] keyBytes = HexFormat.of().parseHex(aesKey);
+        SecretKeySpec keySpec = new SecretKeySpec(keyBytes, "AES");
+
+        // 2) Cipher 설정 (ECB 모드, 패딩은 PKCS5)
+        Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, keySpec);
+
+        // 3) 암호화 수행
+        byte[] encrypted = cipher.doFinal(plainText.getBytes(StandardCharsets.UTF_8));
+
+        // 4) Ciphertext만 Base64로 인코딩해 반환
+        return Base64.getEncoder().encodeToString(encrypted);
+    }
+
+    /**
+     * encryptAES()가 반환한 Base64 암호문을 복호화해 평문으로 반환
+     */
+    public String decryptAES(String cipherTextBase64) throws Exception {
+        // 1) Base64 디코딩
+        byte[] cipherBytes = Base64.getDecoder().decode(cipherTextBase64);
+
+        // 2) 키 준비 (hex 문자열 → byte[])
+        byte[] keyBytes = HexFormat.of().parseHex(aesKey);
+        SecretKeySpec keySpec = new SecretKeySpec(keyBytes, "AES");
+
+        // 3) Cipher 설정 (ECB 모드, 패딩은 PKCS5)
+        Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+        cipher.init(Cipher.DECRYPT_MODE, keySpec);
+
+        // 4) 복호화
+        byte[] plainBytes = cipher.doFinal(cipherBytes);
+        return new String(plainBytes, StandardCharsets.UTF_8);
+    }
+
 
     public UserResponseDto userSignUp(UserRequestDto userRequestDto) {
 
-        // Base64 인코딩 변환
-        User user = new User(
-                Base64.getEncoder().encodeToString(userRequestDto.email().getBytes(StandardCharsets.UTF_8)),
-                Base64.getEncoder().encodeToString(userRequestDto.password().getBytes(StandardCharsets.UTF_8)));
+        User user;
+
+        // 이메일 AES 암호화, 비밀번호 SHA-256 해싱
+        try {
+            user = new User(
+                    encryptAES(userRequestDto.email()),
+                    encryptSHA256(userRequestDto.password()));
+        } catch (Exception e) {
+            throw new EncryptFailedException();
+        }
 
         return new UserResponseDto(userRepository.createUser(user));
     }
 
     public TokenResponseDto userLogin(UserRequestDto userRequestDto) {
 
-        // Base64 인코딩 변환
-        User user = new User(
-                Base64.getEncoder().encodeToString(userRequestDto.email().getBytes(StandardCharsets.UTF_8)),
-                Base64.getEncoder().encodeToString(userRequestDto.password().getBytes(StandardCharsets.UTF_8)));
+        User user;
 
-        userRepository.checkUser(user); // 일치하는 단 1개의 회원정보가 있는지 체크, 없을시 예외
+        // 이메일 AES 암호화, 비밀번호 SHA-256 해싱
+        try {
+           user = new User(
+                    encryptAES(userRequestDto.email()),
+                    encryptSHA256(userRequestDto.password()));
+        } catch (Exception e) {
+            throw new EncryptFailedException();
+        }
 
+        // 동일한 회원 정보 체크 후 없을 경우 예외 반환
+        try{
+            userRepository.checkUser(user);
+        } catch (Exception e) {
+            throw new LoginFailedException();
+        }
+
+        // JWT 생성 후 반환
         return new TokenResponseDto(Jwts.builder()
                 .setSubject(user.email())
                 .signWith(Keys.hmacShaKeyFor(jwtKey.getBytes()))
@@ -51,12 +130,34 @@ public class AuthService {
     }
 
     public List<UserResponseDto> findAllUsers(){
-        return userRepository.findAllUsers().stream().map(UserResponseDto::new).collect(Collectors.toList());
+        return userRepository.findAllUsers().stream()
+                .map(user -> {
+                    try {
+                        return new UserResponseDto(
+                                user.id(),
+                                decryptAES(user.email()),
+                                user.password(),
+                                user.createdDate()
+                        );
+                    } catch (Exception e) {
+                        throw new DecryptFailedException();
+                    }
+                })
+                .collect(Collectors.toList());
     }
 
     public UserResponseDto findUserById(Long id) {
         User user = userRepository.findUserById(id);
-        return new UserResponseDto(user);
+        String email;
+
+        // email 복호화
+        try {
+            email = decryptAES(user.email());
+        } catch (Exception e) {
+            throw new DecryptFailedException();
+        }
+
+        return new UserResponseDto(user.id(), email, user.password(), user.createdDate());
     }
 
     public void deleteUser(Long id){
@@ -66,15 +167,26 @@ public class AuthService {
         }
     }
 
-    public UserResponseDto updateUser(Long id, UserRequestDto requestDto){
-        boolean flag = userRepository.updateUser(id, new User(requestDto.email(), requestDto.password()));
+    public UserResponseDto updateUser(Long id, UserRequestDto userRequestDto){
+
+        User user;
+
+        try {
+            user = new User(
+                    encryptAES(userRequestDto.email()),
+                    encryptSHA256(userRequestDto.password()));
+        }
+        catch (Exception e) {throw new EncryptFailedException();
+        }
+
+        boolean flag = userRepository.updateUser(id, user);
 
         // 수정됐는지 검증
         if(!flag) {
             throw new UserNotFoundException(id);
         }
 
-        User user = userRepository.findUserById(id);
+        user = userRepository.findUserById(id);
         return new UserResponseDto(user);
     }
 }
